@@ -5,7 +5,6 @@ import org.codehaus.groovy.ast.expr.*;
 import org.codehaus.groovy.ast.stmt.ExpressionStatement;
 import org.codehaus.groovy.control.CompilePhase;
 import org.codehaus.groovy.control.SourceUnit;
-import org.codehaus.groovy.runtime.DefaultGroovyMethods;
 import org.codehaus.groovy.transform.AbstractASTTransformation;
 import org.codehaus.groovy.transform.GroovyASTTransformation;
 import org.objectweb.asm.Opcodes;
@@ -15,6 +14,7 @@ import java.util.List;
 
 @GroovyASTTransformation(phase = CompilePhase.SEMANTIC_ANALYSIS)
 public class MapArgumentsASTTransformation extends AbstractASTTransformation {
+
     @Override
     public void visit(ASTNode[] nodes, SourceUnit source) {
         init(nodes, source);
@@ -24,12 +24,12 @@ public class MapArgumentsASTTransformation extends AbstractASTTransformation {
         Parameter[] parameters = methodNode.getParameters();
         Parameter closureParameter = null;
 
-        boolean hasClosureParameter = false;
         switch (parameters.length) {
             case 0:
                 addError("MapArguments parameters should not be empty", methodNode);
                 return;
             case 1:
+                //TODO more object checks
                 break;
             case 2:
                 closureParameter = parameters[1];
@@ -37,18 +37,15 @@ public class MapArgumentsASTTransformation extends AbstractASTTransformation {
                     addError("MapArguments second parameter can be a closure only", closureParameter);
                     return;
                 }
-                hasClosureParameter = true;
                 break;
             default:
                 addError("MapArguments parameters length should not be greater than 2", methodNode);
                 return;
         }
 
-        ClassNode mapNode = nonGeneric(ClassHelper.MAP_TYPE);
-        Parameter mapParameter = new Parameter(mapNode, "__namedArgs");
+        Parameter mapParameter = new Parameter(nonGeneric(ClassHelper.MAP_TYPE), "__namedArgs");
 
-        Parameter[] mapBasedMethodParameters = hasClosureParameter ? new Parameter[]{mapParameter, closureParameter} : new Parameter[]{mapParameter};
-
+        Parameter[] mapBasedMethodParameters = closureParameter != null ? new Parameter[]{mapParameter, closureParameter} : new Parameter[]{mapParameter};
 
         ClassNode declaringClass = methodNode.getDeclaringClass();
 
@@ -64,22 +61,21 @@ public class MapArgumentsASTTransformation extends AbstractASTTransformation {
             ArgumentListExpression convertedArguments = new ArgumentListExpression(new VariableExpression(mapParameter));
 
             if ((parameterType.getModifiers() & Opcodes.ACC_STATIC) == 0) {
+                
+                if(methodNode.isStatic()) {
+                    addError("You can't use inner class as map argument since it's impossible to instantiate it", methodNode);
+                    return;
+                }
+                
                 convertedArguments.getExpressions().add(0, VariableExpression.THIS_EXPRESSION);
             }
 
             convertedValueExpression = new ConstructorCallExpression(parameterType, convertedArguments);
         } else {
-            convertedValueExpression = new StaticMethodCallExpression(
-                    ClassHelper.makeWithoutCaching(DefaultGroovyMethods.class, false),
-                    "asType",
-                    new ArgumentListExpression(new VariableExpression(mapParameter), new ClassExpression(parameterType))
-            );
+            convertedValueExpression = new CastExpression(parameterType, new VariableExpression(mapParameter));
         }
-        ArgumentListExpression oldMethodArguments = new ArgumentListExpression(convertedValueExpression);
 
-        if (hasClosureParameter) {
-            oldMethodArguments.addExpression(new VariableExpression(closureParameter));
-        }
+        ArgumentListExpression oldMethodArguments = new ArgumentListExpression(convertedValueExpression);
 
         List<MethodNode> generatedMethods = new ArrayList<MethodNode>();
         generatedMethods.add(declaringClass.addMethod(
@@ -97,7 +93,9 @@ public class MapArgumentsASTTransformation extends AbstractASTTransformation {
                 )
         ));
 
-        if (hasClosureParameter) {
+        if (closureParameter != null) {
+            oldMethodArguments.addExpression(new VariableExpression(closureParameter));
+
             generatedMethods.add(declaringClass.addMethod(
                     methodNode.getName(),
                     methodNode.getModifiers(),
