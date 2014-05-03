@@ -111,7 +111,7 @@ public class MapArgumentsASTTransformation extends AbstractASTTransformation {
                                     new ArgumentListExpression(
                                             oldMethodArguments.getExpression(0),
                                             new CastExpression(
-                                                    nonGeneric(ClassHelper.CLOSURE_TYPE),
+                                                    closureParameter.getType(),
                                                     new ConstantExpression(null)
                                             )
                                     )
